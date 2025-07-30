@@ -7,7 +7,6 @@
     <title data-i18n="mainTitle">生写真模板生成器</title>
     <link rel="icon" type="image/jpeg" href="images/sakamichi.jpg">
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <!-- Cropper.js CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.css" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1132,39 +1131,121 @@
                 ui.downloadBtn.classList.add('opacity-50', 'cursor-not-allowed');
 
                 try {
-                    // Ensure all custom fonts are loaded before rendering the canvas
                     await document.fonts.ready;
 
-                    // Use html2canvas for a more accurate capture
-                    const canvas = await html2canvas(ui.photoCard, {
-                        scale: 3, // Increase scale for higher resolution output
-                        useCORS: true,
-                        allowTaint: true,
-                        backgroundColor: null, // Use transparent background
-                        logging: false,
-                        onclone: (clonedDoc) => {
-                            // Ensure the image transform is applied correctly in the clone
-                            const clonedPreviewImage = clonedDoc.getElementById('preview-image');
-                            if (clonedPreviewImage) {
-                                clonedPreviewImage.style.transform = ui.previewImage.style.transform;
+                    const scaleFactor = 3;
+                    const rect = ui.photoCard.getBoundingClientRect();
+                    const finalCanvas = document.createElement('canvas');
+                    finalCanvas.width = rect.width * scaleFactor;
+                    finalCanvas.height = rect.height * scaleFactor;
+                    const ctx = finalCanvas.getContext('2d');
+                    ctx.scale(scaleFactor, scaleFactor);
+
+                    // 1. Draw main image
+                    const img = ui.previewImage;
+                    if (img.src && img.complete && img.naturalWidth > 0) {
+                        const containerRect = ui.imageContainer.getBoundingClientRect();
+                        const photoCardRect = ui.photoCard.getBoundingClientRect();
+                        const containerX = containerRect.left - photoCardRect.left;
+                        const containerY = containerRect.top - photoCardRect.top;
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.rect(containerX, containerY, containerRect.width, containerRect.height);
+                        ctx.clip();
+                        
+                        const transformedWidth = containerRect.width * imageState.scale;
+                        const transformedHeight = containerRect.height * imageState.scale;
+                        const drawX = containerX + imageState.translateX + (containerRect.width - transformedWidth) / 2;
+                        const drawY = containerY + imageState.translateY + (containerRect.height - transformedHeight) / 2;
+
+                        ctx.drawImage(img, drawX, drawY, transformedWidth, transformedHeight);
+                        ctx.restore();
+                    }
+
+                    // 2. Draw info bar background and border
+                    const photoCardRect = ui.photoCard.getBoundingClientRect();
+                    const infoBarRect = ui.infoBar.getBoundingClientRect();
+                    const infoBarX = infoBarRect.left - photoCardRect.left;
+                    const infoBarY = infoBarRect.top - photoCardRect.top;
+                    const infoBarWidth = infoBarRect.width;
+                    const infoBarHeight = infoBarRect.height;
+
+                    ctx.fillStyle = ui.infoBarBgColor.value;
+                    ctx.fillRect(infoBarX, infoBarY, infoBarWidth, infoBarHeight);
+
+                    if (ui.borderToggle.checked) {
+                        ctx.strokeStyle = ui.borderColor.value;
+                        ctx.lineWidth = parseFloat(ui.borderThickness.value);
+                        ctx.strokeRect(infoBarX, infoBarY, infoBarWidth, infoBarHeight);
+                    }
+
+                    // 3. Draw all elements inside the info bar
+                    const elementsToDraw = [
+                        { el: ui.logoContainer, isLogo: true },
+                        { el: ui.groupNameImage, isImage: true },
+                        { el: ui.previewTheme },
+                        { el: ui.previewName },
+                        { el: ui.previewRomaji, isOptional: true },
+                    ];
+
+                    for (const item of elementsToDraw) {
+                        if (item.isOptional && ui.romajiBlock.classList.contains('hidden')) continue;
+                        if (!item.el) continue;
+
+                        const elRect = item.el.getBoundingClientRect();
+                        const x = elRect.left - photoCardRect.left;
+                        const y = elRect.top - photoCardRect.top;
+                        
+                        if (item.isLogo || item.isImage) {
+                            const targetImg = item.isLogo ? (ui.imageLogo.src && !ui.imageLogo.classList.contains('hidden') && ui.imageLogo.complete ? ui.imageLogo : ui.svgLogo) : item.el;
+                            
+                            if (targetImg.tagName === 'IMG') {
+                                if (targetImg.complete && targetImg.naturalWidth > 0) {
+                                    ctx.drawImage(targetImg, x, y, elRect.width, elRect.height);
+                                }
+                            } else { // SVG Logic
+                                const svgText = new XMLSerializer().serializeToString(targetImg);
+                                const coloredSvgText = svgText.replace(/class="fill-current"/g, `fill="${ui.infoColor.value}"`);
+                                const svgBlob = new Blob([coloredSvgText], { type: 'image/svg+xml;charset=utf-8' });
+                                const url = URL.createObjectURL(svgBlob);
+                                const svgImage = await new Promise(resolve => {
+                                    const img = new Image();
+                                    img.onload = () => resolve(img);
+                                    img.onerror = () => resolve(null);
+                                    img.src = url;
+                                });
+                                if (svgImage) {
+                                    ctx.drawImage(svgImage, x, y, elRect.width, elRect.height);
+                                }
+                                URL.revokeObjectURL(url);
                             }
+                        } else { // Text Logic
+                            const computedStyle = getComputedStyle(item.el);
+                            ctx.fillStyle = computedStyle.color;
+                            ctx.font = `${computedStyle.fontWeight} ${computedStyle.fontSize} ${computedStyle.fontFamily}`;
+                            ctx.textAlign = computedStyle.textAlign;
+                            ctx.textBaseline = 'middle';
+                            
+                            let textX = x;
+                            if(ctx.textAlign === 'right') {
+                                textX = x + elRect.width;
+                            } else if (ctx.textAlign === 'center') {
+                                textX = x + elRect.width / 2;
+                            }
+                            const textY = y + elRect.height / 2;
+                            ctx.fillText(item.el.textContent, textX, textY);
                         }
-                    });
+                    }
 
                     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
                     if (isIOS) {
-                        // On iOS, show the image in a modal for the user to save manually
-                        ui.iosFinalImage.src = canvas.toDataURL('image/png');
+                        ui.iosFinalImage.src = finalCanvas.toDataURL('image/png');
                         ui.iosSaveModal.classList.remove('hidden');
                         ui.iosSaveModal.classList.add('flex');
                     } else {
-                        // On other devices, trigger download directly
-                        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-                        
-                        if (!blob) {
-                            throw new Error('Canvas to Blob conversion failed');
-                        }
+                        const blob = await new Promise(resolve => finalCanvas.toBlob(resolve, 'image/png'));
+                        if (!blob) throw new Error('Canvas to Blob conversion failed');
 
                         const url = URL.createObjectURL(blob);
                         const finalLink = document.createElement('a');
@@ -1172,11 +1253,9 @@
                         const theme = ui.photoTheme.value.trim().replace(/\s+/g, '_') || 'custom';
                         finalLink.download = `photo_card_${memberName}_${theme}.png`;
                         finalLink.href = url;
-                        
                         document.body.appendChild(finalLink);
                         finalLink.click();
                         document.body.removeChild(finalLink);
-
                         URL.revokeObjectURL(url);
                     }
 
@@ -1194,7 +1273,6 @@
 
             // --- Initialization ---
             const init = () => {
-                // Get user's preferred language
                 const savedLang = localStorage.getItem('preferredLanguage');
                 const browserLang = navigator.language.split('-')[0];
                 const initialLang = savedLang || (translations[browserLang] ? browserLang : 'zh');
@@ -1211,3 +1289,15 @@
 </body>
 
 </html>
+" code between  and  in the most up-to-date Canvas "生写真模板生成器 (已修复)" document above and am asking a query about/based on this code below.
+Instructions to follow:
+  * Don't output/edit the document if the query is Direct/Simple. For example, if the query asks for a simple explanation, output a direct answer.
+  * Make sure to **edit** the document if the query shows the intent of editing the document, in which case output the entire edited document, **not just that section or the edits**.
+    * Don't output the same document/empty document and say that you have edited it.
+    * Don't change unrelated code in the document.
+  * Don't output  and  in your final response.
+  * Any references like "this" or "selected code" refers to the code between  and  tags.
+  * Just acknowledge my request in the introduction.
+  * Make sure to refer to the document as "Canvas" in your response.
+
+不要用html2canvas，电脑上也
