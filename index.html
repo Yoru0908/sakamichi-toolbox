@@ -1208,7 +1208,7 @@
                     const memberName = ui.memberName.value.trim() || 'member';
                     const theme = ui.photoTheme.value.trim().replace(/\s+/g, '_') || 'custom';
                     finalLink.download = `photo_card_${memberName}_${theme}.png`;
-                    finalLink.href = finalCanvas.toDataURL('image/png');
+                    finalLink.href = finalCanvas.toDataURL('image/png'); 
                     finalLink.click();
 
                 } catch (err) {
